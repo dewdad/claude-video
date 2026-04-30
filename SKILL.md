@@ -1,18 +1,23 @@
 ---
 name: watch
-description: Watch a video (URL or local path). Downloads with yt-dlp, extracts auto-scaled frames with ffmpeg, pulls the transcript from captions (or Whisper API fallback), and hands the result to Claude so it can answer questions about what's in the video.
+description: Watch a video (URL or local path). Downloads with yt-dlp, extracts auto-scaled frames with ffmpeg, pulls the transcript from captions (or Whisper API fallback), and hands the result to the agent so it can answer questions about what's in the video.
 argument-hint: "<video-url-or-path> [question]"
 allowed-tools: Bash, Read, AskUserQuestion
-homepage: https://github.com/bradautomates/claude-video
-repository: https://github.com/bradautomates/claude-video
+homepage: https://github.com/dewdad/claude-video
+repository: https://github.com/dewdad/claude-video
 author: bradautomates
 license: MIT
 user-invocable: true
 ---
 
-# /watch — Claude watches a video
+# /watch — Watch a video
 
 You don't have a video input; this skill gives you one. A Python script downloads the video, extracts frames as JPEGs, gets a timestamped transcript (native captions first, then Whisper API as fallback), and prints frame paths. You then `Read` each frame path to see the images and combine them with the transcript to answer the user.
+
+**Skill directory variable:** Throughout this document, `$SKILL_DIR` refers to the directory containing this SKILL.md file and the `scripts/` subdirectory. Depending on your tool:
+- **OpenCode**: `$SKILL_DIR` is resolved automatically to the skill's install path (e.g. `~/.config/opencode/skills/watch`)
+- **Claude Code**: Use `$CLAUDE_SKILL_DIR` (or `$CLAUDE_PLUGIN_ROOT`)
+- **Other tools**: The directory containing this file
 
 ## Step 0 — Setup preflight (runs every `/watch` invocation, silent on success)
 
@@ -21,7 +26,7 @@ You don't have a video input; this skill gives you one. A Python script download
 Before every `/watch` run, verify that dependencies and an API key are in place:
 
 ```bash
-python3 "${CLAUDE_SKILL_DIR}/scripts/setup.py" --check
+python3 "$SKILL_DIR/scripts/setup.py" --check
 ```
 
 This is a <100ms lookup. On exit 0, the script emits **nothing** — proceed to Step 1 without comment. **Do NOT announce "setup is complete" to the user** — they don't need a status message on every turn. The only acceptable user-visible output from Step 0 is when remediation is required.
@@ -37,14 +42,14 @@ On non-zero exit, follow the table:
 The installer is idempotent — safe to re-run:
 
 ```bash
-python3 "${CLAUDE_SKILL_DIR}/scripts/setup.py"
+python3 "$SKILL_DIR/scripts/setup.py"
 ```
 
 On macOS with Homebrew, it auto-installs `ffmpeg` and `yt-dlp`. On Linux/Windows, it prints the exact install commands for the user to run. It scaffolds `~/.config/watch/.env` with commented placeholders at `0600` perms, and writes `SETUP_COMPLETE=true` once deps + a key are in place so the next session knows this user has already been through the wizard.
 
 **If an API key is still missing after install:** use `AskUserQuestion` to ask the user whether they have a Groq API key (preferred — cheaper, faster) or an OpenAI key. Then write it into `~/.config/watch/.env` — set the matching `GROQ_API_KEY=...` or `OPENAI_API_KEY=...` line. If they don't want to set up Whisper, proceed with `--no-whisper` and tell them videos without native captions will come back frames-only.
 
-**Structured mode (optional):** `python3 "${CLAUDE_SKILL_DIR}/scripts/setup.py" --json` emits `{status, first_run, missing_binaries, whisper_backend, has_api_key, config_file, platform}` where `status` is one of `ready | needs_install | needs_key | needs_install_and_key`. Use this when you need to branch on specifics (e.g. "is this the user's very first run?" → `first_run: true`).
+**Structured mode (optional):** `python3 "$SKILL_DIR/scripts/setup.py" --json` emits `{status, first_run, missing_binaries, whisper_backend, has_api_key, config_file, platform}` where `status` is one of `ready | needs_install | needs_key | needs_install_and_key`. Use this when you need to branch on specifics (e.g. "is this the user's very first run?" → `first_run: true`).
 
 Within a single session, you can skip Step 0 on follow-up `/watch` calls — once `--check` returned 0, nothing about the environment changes between turns.
 
@@ -72,7 +77,7 @@ Within a single session, you can skip Step 0 on follow-up `/watch` calls — onc
 **Step 2 — run the watch script.** Pass the source verbatim. Do not shell-escape it yourself beyond normal quoting:
 
 ```bash
-python3 "${CLAUDE_SKILL_DIR}/scripts/watch.py" "<source>"
+python3 "$SKILL_DIR/scripts/watch.py" "<source>"
 ```
 
 Optional flags:
@@ -104,13 +109,13 @@ Transcript is auto-filtered to the same range. Frame timestamps are absolute (re
 Examples:
 ```bash
 # Last 10 seconds of a 1 minute video
-python3 "${CLAUDE_SKILL_DIR}/scripts/watch.py" video.mp4 --start 50 --end 60
+python3 "$SKILL_DIR/scripts/watch.py" video.mp4 --start 50 --end 60
 
 # Zoom into 2:15 → 2:45 at 3 fps (90 frames)
-python3 "${CLAUDE_SKILL_DIR}/scripts/watch.py" "$URL" --start 2:15 --end 2:45 --fps 3
+python3 "$SKILL_DIR/scripts/watch.py" "$URL" --start 2:15 --end 2:45 --fps 3
 
 # From 1h12m to the end of the video
-python3 "${CLAUDE_SKILL_DIR}/scripts/watch.py" "$URL" --start 1:12:00
+python3 "$SKILL_DIR/scripts/watch.py" "$URL" --start 1:12:00
 ```
 
 **Step 3 — Read every frame path the script lists.** The Read tool renders JPEGs directly as images for you. Read all frames in a single message (parallel tool calls) so you see them together. The frames are in chronological order with a `t=MM:SS` timestamp so you can align them to the transcript.
@@ -136,7 +141,7 @@ Both keys live in `~/.config/watch/.env`. The script prefers Groq when both are 
 
 ## Failure modes and handling
 
-- **Setup preflight failed** → run `python3 "${CLAUDE_SKILL_DIR}/scripts/setup.py"` (auto-installs ffmpeg/yt-dlp via brew on macOS, scaffolds the `.env`). For API key, ask the user via `AskUserQuestion` and write it to `~/.config/watch/.env`.
+- **Setup preflight failed** → run `python3 "$SKILL_DIR/scripts/setup.py"` (auto-installs ffmpeg/yt-dlp via brew on macOS, scaffolds the `.env`). For API key, ask the user via `AskUserQuestion` and write it to `~/.config/watch/.env`.
 - **No transcript available** → captions missing AND (no Whisper key OR Whisper API failed). Script prints a hint pointing to setup. Proceed frames-only and tell the user.
 - **Long video warning printed** → acknowledge it in your answer. Offer to re-run focused on a specific section via `--start`/`--end` rather than a sparse full-video scan.
 - **Download fails** → yt-dlp's error goes to stderr. If it's a login-required or region-locked video, tell the user plainly; do not keep retrying.
