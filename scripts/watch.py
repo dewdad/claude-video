@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """/watch entry point: download video, extract frames, parse transcript.
 
-Prints a markdown report to stdout listing frame paths + transcript. Claude
+Prints a markdown report to stdout listing frame paths + transcript. The agent
 then Reads each frame path to see the video.
 """
 from __future__ import annotations
@@ -17,8 +17,9 @@ sys.path.insert(0, str(SCRIPT_DIR))
 
 from download import download, is_url  # noqa: E402
 from frames import MAX_FPS, auto_fps, auto_fps_focus, extract, format_time, get_metadata, parse_time  # noqa: E402
+from nemotron import analyze_media, load_ngc_key, MAX_VIDEO_DURATION_SEC  # noqa: E402
 from transcribe import filter_range, format_transcript, parse_vtt  # noqa: E402
-from whisper import load_api_key, transcribe_video  # noqa: E402
+from whisper import extract_audio, load_api_key, transcribe_video  # noqa: E402
 
 
 def main() -> int:
@@ -43,6 +44,23 @@ def main() -> int:
         choices=["groq", "openai"],
         default=None,
         help="Force a specific Whisper backend. Default: prefer Groq, fall back to OpenAI.",
+    )
+    ap.add_argument(
+        "--nemotron",
+        action="store_true",
+        help="Use Nemotron multimodal analysis (video ≤2min or audio). "
+             "Provides unified audio+visual understanding including non-speech audio.",
+    )
+    ap.add_argument(
+        "--nemotron-audio",
+        action="store_true",
+        help="Force Nemotron audio-only mode (up to 1hr). Use for long videos or "
+             "when you want non-speech audio analysis (music, SFX, ambient sounds).",
+    )
+    ap.add_argument(
+        "--no-nemotron",
+        action="store_true",
+        help="Disable Nemotron fallback even when NGC_API_KEY is available.",
     )
     args = ap.parse_args()
 
@@ -107,41 +125,92 @@ def main() -> int:
     transcript_segments: list[dict] = []
     transcript_text: str | None = None
     transcript_source: str | None = None
-    if dl.get("subtitle_path"):
-        try:
-            all_segments = parse_vtt(dl["subtitle_path"])
-            transcript_segments = filter_range(all_segments, start_sec, end_sec) if focused else all_segments
-            transcript_text = format_transcript(transcript_segments)
-            transcript_source = "captions"
-        except Exception as exc:
-            print(f"[watch] subtitle parse failed: {exc}", file=sys.stderr)
+    nemotron_analysis: str | None = None
 
-    if not transcript_segments and not args.no_whisper:
-        backend, api_key = load_api_key(args.whisper)
-        if backend and api_key:
+    # --- Nemotron: explicit --nemotron or --nemotron-audio overrides the pipeline ---
+    if args.nemotron or args.nemotron_audio:
+        ngc_key = load_ngc_key()
+        if ngc_key:
+            mode = "audio" if args.nemotron_audio else "auto"
             try:
-                all_segments, used_backend = transcribe_video(
-                    video_path,
-                    work / "audio.mp3",
-                    backend=backend,
-                    api_key=api_key,
+                media_path = video_path if mode != "audio" else None
+                if mode == "audio":
+                    audio_out = work / "nemotron-audio.mp3"
+                    extract_audio(video_path, audio_out)
+                    media_path = audio_out
+                else:
+                    media_path = Path(video_path)
+                text, used_mode = analyze_media(
+                    media_path, full_duration, ngc_key, mode=mode,
                 )
-                transcript_segments = filter_range(all_segments, start_sec, end_sec) if focused else all_segments
-                transcript_text = format_transcript(transcript_segments)
-                transcript_source = f"whisper ({used_backend})"
+                nemotron_analysis = text
+                transcript_source = f"nemotron ({used_mode})"
             except SystemExit as exc:
-                print(f"[watch] whisper fallback failed: {exc}", file=sys.stderr)
+                print(f"[watch] nemotron failed: {exc}", file=sys.stderr)
         else:
-            hint = (
-                f"--whisper {args.whisper} was set but the matching API key is missing"
-                if args.whisper else
-                "no subtitles and no Whisper API key found"
-            )
-            setup_py = SCRIPT_DIR / "setup.py"
             print(
-                f"[watch] {hint} — run `python3 {setup_py}` to enable the Whisper fallback",
+                "[watch] --nemotron requested but NGC_API_KEY not found. "
+                "Set it in ~/.config/watch/.env or environment.",
                 file=sys.stderr,
             )
+
+    # --- Standard pipeline: captions → whisper → nemotron fallback ---
+    if not nemotron_analysis:
+        if dl.get("subtitle_path"):
+            try:
+                all_segments = parse_vtt(dl["subtitle_path"])
+                transcript_segments = filter_range(all_segments, start_sec, end_sec) if focused else all_segments
+                transcript_text = format_transcript(transcript_segments)
+                transcript_source = "captions"
+            except Exception as exc:
+                print(f"[watch] subtitle parse failed: {exc}", file=sys.stderr)
+
+        if not transcript_segments and not args.no_whisper:
+            backend, api_key = load_api_key(args.whisper)
+            if backend and api_key:
+                try:
+                    all_segments, used_backend = transcribe_video(
+                        video_path,
+                        work / "audio.mp3",
+                        backend=backend,
+                        api_key=api_key,
+                    )
+                    transcript_segments = filter_range(all_segments, start_sec, end_sec) if focused else all_segments
+                    transcript_text = format_transcript(transcript_segments)
+                    transcript_source = f"whisper ({used_backend})"
+                except SystemExit as exc:
+                    print(f"[watch] whisper fallback failed: {exc}", file=sys.stderr)
+            else:
+                hint = (
+                    f"--whisper {args.whisper} was set but the matching API key is missing"
+                    if args.whisper else
+                    "no subtitles and no Whisper API key found"
+                )
+                setup_py = SCRIPT_DIR / "setup.py"
+                print(
+                    f"[watch] {hint} — run `python3 {setup_py}` to enable the Whisper fallback",
+                    file=sys.stderr,
+                )
+
+        # --- Nemotron auto-fallback: if no transcript yet and NGC key available ---
+        if not transcript_segments and not args.no_nemotron and not nemotron_analysis:
+            ngc_key = load_ngc_key()
+            if ngc_key:
+                mode = "audio" if full_duration > MAX_VIDEO_DURATION_SEC else "auto"
+                try:
+                    if mode == "audio":
+                        audio_out = work / "nemotron-audio.mp3"
+                        extract_audio(video_path, audio_out)
+                        media_file = audio_out
+                    else:
+                        media_file = Path(video_path)
+                    text, used_mode = analyze_media(
+                        media_file, full_duration, ngc_key, mode=mode,
+                    )
+                    nemotron_analysis = text
+                    transcript_source = f"nemotron ({used_mode})"
+                except SystemExit as exc:
+                    print(f"[watch] nemotron fallback failed: {exc}", file=sys.stderr)
 
     info = dl.get("info") or {}
 
@@ -170,6 +239,8 @@ def main() -> int:
             f"- **Transcript:** {len(transcript_segments)} segments{in_range} "
             f"(via {transcript_source or 'captions'})"
         )
+    elif nemotron_analysis:
+        print(f"- **Analysis:** multimodal (via {transcript_source})")
     else:
         print("- **Transcript:** none available")
 
@@ -208,15 +279,19 @@ def main() -> int:
         print("```")
         print(transcript_text)
         print("```")
+    elif nemotron_analysis:
+        print(f"_Source: {transcript_source}. Multimodal analysis (audio + visual):_")
+        print()
+        print(nemotron_analysis)
     elif focused and dl.get("subtitle_path"):
         print(f"_No transcript lines fell inside {format_time(effective_start)} → {format_time(effective_end)}._")
     else:
         setup_py = SCRIPT_DIR / "setup.py"
         print(
             "_No transcript available — proceed with frames only. "
-            "Captions were missing and the Whisper fallback was unavailable "
-            "(no API key set, or `--no-whisper` was used). "
-            f"Run `python3 {setup_py}` to enable Whisper, then re-run._"
+            "Captions were missing and the Whisper/Nemotron fallbacks were unavailable "
+            "(no API key set, or `--no-whisper`/`--no-nemotron` was used). "
+            f"Run `python3 {setup_py}` to enable transcription, then re-run._"
         )
 
     print()

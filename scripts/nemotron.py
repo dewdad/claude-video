@@ -1,0 +1,373 @@
+#!/usr/bin/env python3
+"""Nemotron-3-Nano-Omni multimodal analysis via NVIDIA NIM API.
+
+Sends video (≤2 min) or audio (≤1 hr) directly to Nemotron for unified
+audio-visual understanding. Complements the Whisper fallback by handling:
+  - Non-speech audio (music, SFX, ambient sounds)
+  - Audio-visual correlation ("describe what's shown when X is said")
+  - Short-form video analysis in a single API call
+
+API: OpenAI-compatible /v1/chat/completions at integrate.api.nvidia.com.
+Auth: NGC_API_KEY in env or ~/.config/watch/.env.
+
+Pure stdlib — no pip dependencies.
+"""
+from __future__ import annotations
+
+import base64
+import json
+import os
+import ssl
+import sys
+import time
+import urllib.error
+from pathlib import Path
+from urllib.request import Request, urlopen
+
+
+NIM_BASE_URL = "https://integrate.api.nvidia.com/v1/chat/completions"
+NIM_MODEL = "nvidia/nemotron-3-nano-omni-reasoning-30b-a3b"
+
+# NIM API constraints
+MAX_VIDEO_DURATION_SEC = 120  # 2 minutes
+MAX_AUDIO_DURATION_SEC = 3600  # 1 hour
+ASSET_UPLOAD_THRESHOLD_BYTES = 200 * 1024  # 200 KB inline limit
+
+# Retry configuration (matches whisper.py conventions)
+MAX_ATTEMPTS = 3
+RETRY_BASE_DELAY = 3.0
+
+
+def load_ngc_key() -> str | None:
+    """Load NGC_API_KEY from environment or ~/.config/watch/.env."""
+    value = os.environ.get("NGC_API_KEY")
+    if value and value.strip():
+        return value.strip()
+
+    dotenv_paths = [
+        Path.home() / ".config" / "watch" / ".env",
+        Path.cwd() / ".env",
+    ]
+    for path in dotenv_paths:
+        if not path.exists():
+            continue
+        try:
+            for line in path.read_text().splitlines():
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, _, raw = line.partition("=")
+                if key.strip() != "NGC_API_KEY":
+                    continue
+                raw = raw.strip()
+                if len(raw) >= 2 and raw[0] in ('"', "'") and raw[-1] == raw[0]:
+                    raw = raw[1:-1]
+                return raw or None
+        except OSError:
+            continue
+    return None
+
+
+def _encode_file_b64(file_path: Path) -> str:
+    """Read and base64-encode a file."""
+    return base64.b64encode(file_path.read_bytes()).decode("utf-8")
+
+
+def _detect_media_type(file_path: Path) -> tuple[str, str]:
+    """Determine content type category and MIME type from extension.
+
+    Returns (category, mime_type) where category is 'video' or 'audio'.
+    """
+    ext = file_path.suffix.lower()
+    video_types = {
+        ".mp4": "video/mp4",
+        ".mov": "video/quicktime",
+        ".webm": "video/webm",
+        ".mkv": "video/x-matroska",
+    }
+    audio_types = {
+        ".mp3": "audio/mpeg",
+        ".wav": "audio/wav",
+        ".ogg": "audio/ogg",
+        ".flac": "audio/flac",
+        ".m4a": "audio/mp4",
+        ".aac": "audio/aac",
+    }
+    if ext in video_types:
+        return "video", video_types[ext]
+    if ext in audio_types:
+        return "audio", audio_types[ext]
+    # Default to video for unknown extensions
+    return "video", "video/mp4"
+
+
+def _build_request_body(
+    file_path: Path,
+    prompt: str,
+    *,
+    use_audio_in_video: bool = True,
+    max_tokens: int = 4096,
+) -> dict:
+    """Build the chat/completions request body with inline media."""
+    category, mime_type = _detect_media_type(file_path)
+    b64_data = _encode_file_b64(file_path)
+    data_url = f"data:{mime_type};base64,{b64_data}"
+
+    if category == "video":
+        content_item = {
+            "type": "video_url",
+            "video_url": {"url": data_url},
+        }
+    else:
+        content_item = {
+            "type": "input_audio",
+            "input_audio": {"data": b64_data, "format": file_path.suffix.lstrip(".")},
+        }
+
+    body = {
+        "model": NIM_MODEL,
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    content_item,
+                    {"type": "text", "text": prompt},
+                ],
+            }
+        ],
+        "max_tokens": max_tokens,
+        "temperature": 0,  # Required for audio/video inputs
+        "stream": False,
+        "extra_body": {
+            "chat_template_kwargs": {"enable_thinking": False},
+            "mm_processor_kwargs": {"use_audio_in_video": use_audio_in_video},
+        },
+    }
+    return body
+
+
+def _post_nim(api_key: str, body: dict) -> dict:
+    """POST to NVIDIA NIM API with retry logic."""
+    data = json.dumps(body).encode("utf-8")
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "NVCF-POLL-SECONDS": "300",
+        "User-Agent": "watch-skill/1.0 (+claude-video; python-urllib)",
+    }
+
+    context = ssl.create_default_context()
+    last_exc: Exception | None = None
+
+    for attempt in range(MAX_ATTEMPTS):
+        request = Request(NIM_BASE_URL, data=data, headers=headers, method="POST")
+        try:
+            with urlopen(request, timeout=600, context=context) as response:
+                payload = response.read().decode("utf-8", errors="replace")
+        except urllib.error.HTTPError as exc:
+            last_exc = exc
+            detail = ""
+            try:
+                detail = f" — {exc.read().decode('utf-8', errors='replace')[:400]}"
+            except Exception:
+                pass
+
+            # Non-retryable client errors
+            if 400 <= exc.code < 500 and exc.code != 429:
+                raise SystemExit(f"Nemotron API error ({exc.code}): {exc}{detail}")
+
+            if exc.code == 429:
+                delay = RETRY_BASE_DELAY * (2 ** attempt) + 2
+            else:
+                delay = RETRY_BASE_DELAY * (2 ** attempt)
+
+            if attempt < MAX_ATTEMPTS - 1:
+                print(
+                    f"[watch] nemotron HTTP {exc.code} — retrying in {delay:.1f}s "
+                    f"(attempt {attempt + 2}/{MAX_ATTEMPTS})",
+                    file=sys.stderr,
+                )
+                time.sleep(delay)
+            continue
+        except (urllib.error.URLError, TimeoutError, ConnectionResetError, OSError) as exc:
+            last_exc = exc
+            if attempt < MAX_ATTEMPTS - 1:
+                delay = RETRY_BASE_DELAY * (attempt + 1)
+                print(
+                    f"[watch] nemotron network error ({type(exc).__name__}) — "
+                    f"retrying in {delay:.1f}s (attempt {attempt + 2}/{MAX_ATTEMPTS})",
+                    file=sys.stderr,
+                )
+                time.sleep(delay)
+            continue
+
+        try:
+            return json.loads(payload)
+        except json.JSONDecodeError as exc:
+            raise SystemExit(f"Nemotron returned non-JSON response: {exc}: {payload[:200]}")
+
+    raise SystemExit(f"Nemotron request failed after {MAX_ATTEMPTS} attempts: {last_exc}")
+
+
+def _extract_text(response: dict) -> str:
+    """Extract text content from NIM chat/completions response."""
+    choices = response.get("choices") or []
+    if not choices:
+        raise SystemExit("Nemotron returned no choices in response")
+    message = choices[0].get("message") or {}
+    content = message.get("content") or ""
+    if not content.strip():
+        raise SystemExit("Nemotron returned empty content")
+    return content.strip()
+
+
+def analyze_video(
+    video_path: Path,
+    duration_seconds: float,
+    api_key: str,
+    *,
+    prompt: str | None = None,
+) -> str:
+    """Analyze a video file (≤2 min) with Nemotron multimodal understanding.
+
+    Returns a text description covering visual content, audio/speech, and
+    their correlation. Raises SystemExit on failure.
+    """
+    if duration_seconds > MAX_VIDEO_DURATION_SEC:
+        raise SystemExit(
+            f"Video is {duration_seconds:.0f}s — exceeds Nemotron's {MAX_VIDEO_DURATION_SEC}s "
+            f"limit for video input. Use --nemotron-audio for audio-only analysis of longer content."
+        )
+
+    file_size = video_path.stat().st_size
+    if file_size > 180 * 1024 * 1024:  # 180 MB sanity limit
+        raise SystemExit(
+            f"Video file is {file_size / (1024*1024):.0f} MB — too large for inline upload. "
+            "Consider trimming the video or using --start/--end."
+        )
+
+    if prompt is None:
+        prompt = (
+            "Analyze this video comprehensively. Provide:\n"
+            "1. A timestamped description of what happens visually\n"
+            "2. What is heard in the audio (speech transcription, music, sound effects, ambient sounds)\n"
+            "3. How audio and visual elements relate to each other\n"
+            "4. Any on-screen text or graphics\n\n"
+            "Format timestamps as [MM:SS] or [HH:MM:SS]. Be specific and detailed."
+        )
+
+    print(
+        f"[watch] sending video ({file_size / 1024:.0f} kB, {duration_seconds:.0f}s) to Nemotron…",
+        file=sys.stderr,
+    )
+
+    body = _build_request_body(video_path, prompt, use_audio_in_video=True)
+    response = _post_nim(api_key, body)
+    return _extract_text(response)
+
+
+def analyze_audio(
+    audio_path: Path,
+    api_key: str,
+    *,
+    prompt: str | None = None,
+) -> str:
+    """Analyze an audio file (≤1 hr) with Nemotron.
+
+    Handles non-speech audio (music, SFX, ambient) that Whisper cannot.
+    Returns a text description. Raises SystemExit on failure.
+    """
+    file_size = audio_path.stat().st_size
+    if file_size > 100 * 1024 * 1024:  # 100 MB sanity limit
+        raise SystemExit(
+            f"Audio file is {file_size / (1024*1024):.0f} MB — may exceed API limits. "
+            "Consider trimming."
+        )
+
+    if prompt is None:
+        prompt = (
+            "Analyze this audio comprehensively. Provide:\n"
+            "1. Transcription of any speech with timestamps [MM:SS]\n"
+            "2. Description of non-speech audio (music genre/mood, instruments, "
+            "sound effects, ambient sounds)\n"
+            "3. Speaker identification if multiple speakers\n"
+            "4. Notable audio events or transitions\n\n"
+            "Be specific and detailed. Use timestamps where possible."
+        )
+
+    print(
+        f"[watch] sending audio ({file_size / 1024:.0f} kB) to Nemotron…",
+        file=sys.stderr,
+    )
+
+    body = _build_request_body(audio_path, prompt, use_audio_in_video=False)
+    response = _post_nim(api_key, body)
+    return _extract_text(response)
+
+
+def analyze_media(
+    file_path: Path,
+    duration_seconds: float,
+    api_key: str,
+    *,
+    mode: str = "auto",
+    prompt: str | None = None,
+) -> tuple[str, str]:
+    """Unified entry point for Nemotron analysis.
+
+    Args:
+        file_path: Path to video or audio file.
+        duration_seconds: Duration of the media.
+        api_key: NGC API key.
+        mode: 'video' (full multimodal), 'audio' (audio-only), or 'auto'.
+        prompt: Custom prompt (default: comprehensive analysis).
+
+    Returns:
+        (analysis_text, mode_used) tuple.
+    """
+    category, _ = _detect_media_type(file_path)
+
+    if mode == "auto":
+        if category == "audio":
+            mode = "audio"
+        elif duration_seconds <= MAX_VIDEO_DURATION_SEC:
+            mode = "video"
+        else:
+            mode = "audio"
+
+    if mode == "video":
+        text = analyze_video(file_path, duration_seconds, api_key, prompt=prompt)
+        return text, "video"
+    else:
+        text = analyze_audio(file_path, api_key, prompt=prompt)
+        return text, "audio"
+
+
+if __name__ == "__main__":
+    if len(sys.argv) < 2:
+        print(
+            "usage: nemotron.py <media-path> [--mode video|audio|auto] [--prompt '...']",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+
+    media_path = Path(sys.argv[1])
+    if not media_path.exists():
+        raise SystemExit(f"File not found: {media_path}")
+
+    mode = "auto"
+    prompt = None
+    if "--mode" in sys.argv:
+        mode = sys.argv[sys.argv.index("--mode") + 1]
+    if "--prompt" in sys.argv:
+        prompt = sys.argv[sys.argv.index("--prompt") + 1]
+
+    key = load_ngc_key()
+    if not key:
+        raise SystemExit("NGC_API_KEY not found. Set in env or ~/.config/watch/.env")
+
+    # For standalone use, estimate duration at 0 (let mode override)
+    result, used_mode = analyze_media(media_path, 0, key, mode=mode, prompt=prompt)
+    print(f"[nemotron] mode: {used_mode}")
+    print(result)

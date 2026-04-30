@@ -42,10 +42,23 @@ ENV_TEMPLATE = """# /watch API configuration
 # Get an OpenAI key:  https://platform.openai.com/api-keys
 #
 # Leave both blank to disable Whisper — /watch will still work, but videos
-# without native captions will come back frames-only.
+# without native captions will come back frames-only (unless Nemotron is set up).
 
 GROQ_API_KEY=
 OPENAI_API_KEY=
+
+# Nemotron multimodal analysis — NVIDIA Nemotron-3-Nano-Omni via NIM API.
+# Provides unified audio+visual understanding including non-speech audio
+# (music, sound effects, ambient sounds) and audio-visual correlation.
+# Used as fallback when captions and Whisper are unavailable, or explicitly
+# with --nemotron / --nemotron-audio flags.
+#
+# Get an NGC key:  https://build.nvidia.com/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning
+# (sign in → API Key section)
+#
+# Constraints: video mode ≤2 min, audio mode ≤1 hr.
+
+NGC_API_KEY=
 """
 
 
@@ -101,6 +114,10 @@ def _have_api_key() -> tuple[bool, str | None]:
     if _read_env_key("OPENAI_API_KEY"):
         return True, "openai"
     return False, None
+
+
+def _have_ngc_key() -> bool:
+    return bool(_read_env_key("NGC_API_KEY"))
 
 
 def is_first_run() -> bool:
@@ -197,13 +214,13 @@ def _install_hint_windows(missing: list[str]) -> str:
 
 
 def _status() -> dict:
-    """Structured preflight snapshot."""
     missing = _check_binaries()
     has_key, backend = _have_api_key()
+    has_ngc = _have_ngc_key()
 
-    if not missing and has_key:
+    if not missing and (has_key or has_ngc):
         status = "ready"
-    elif missing and not has_key:
+    elif missing and not has_key and not has_ngc:
         status = "needs_install_and_key"
     elif missing:
         status = "needs_install"
@@ -216,6 +233,8 @@ def _status() -> dict:
         "missing_binaries": missing,
         "whisper_backend": backend,
         "has_api_key": has_key,
+        "has_ngc_key": has_ngc,
+        "nemotron_available": has_ngc,
         "config_file": str(CONFIG_FILE),
         "platform": platform.system(),
     }
@@ -227,7 +246,7 @@ def cmd_check() -> int:
     Exit 0 with no output when ready. On failure, print one actionable line
     to stderr and return:
       2 → binaries missing
-      3 → API key missing
+      3 → API key missing (neither Whisper nor NGC)
       4 → both missing
     """
     s = _status()
@@ -237,8 +256,8 @@ def cmd_check() -> int:
     parts = []
     if s["missing_binaries"]:
         parts.append(f"missing binaries: {', '.join(s['missing_binaries'])}")
-    if not s["has_api_key"]:
-        parts.append("no Whisper API key (GROQ_API_KEY or OPENAI_API_KEY)")
+    if not s["has_api_key"] and not s["has_ngc_key"]:
+        parts.append("no transcription API key (GROQ_API_KEY, OPENAI_API_KEY, or NGC_API_KEY)")
     installer = Path(__file__).resolve()
     sys.stderr.write(
         f"[watch] setup incomplete ({'; '.join(parts)}). "
@@ -246,7 +265,7 @@ def cmd_check() -> int:
     )
     sys.stderr.flush()
 
-    if s["missing_binaries"] and not s["has_api_key"]:
+    if s["missing_binaries"] and not s["has_api_key"] and not s["has_ngc_key"]:
         return 4
     if s["missing_binaries"]:
         return 2
@@ -294,21 +313,28 @@ def cmd_install() -> int:
         print(f"[setup] config exists: {CONFIG_FILE}")
 
     has_key, backend = _have_api_key()
-    if has_key:
+    has_ngc = _have_ngc_key()
+    if has_key or has_ngc:
         _write_setup_complete()
-        print(f"[setup] ready. whisper backend: {backend}")
+        parts = []
+        if backend:
+            parts.append(f"whisper: {backend}")
+        if has_ngc:
+            parts.append("nemotron: nvidia nim")
+        print(f"[setup] ready. backends: {', '.join(parts)}")
         if installed_deps:
             print("[setup] installed dependencies; /watch is fully set up.")
         return 0
 
     print("")
-    print("[setup] one step left: add a Whisper API key.")
+    print("[setup] one step left: add a transcription API key.")
     print("")
-    print(f"  Edit {CONFIG_FILE} and set either:")
-    print("    GROQ_API_KEY=...    (preferred — cheaper, faster; get one at console.groq.com/keys)")
-    print("    OPENAI_API_KEY=...  (fallback; get one at platform.openai.com/api-keys)")
+    print(f"  Edit {CONFIG_FILE} and set at least one:")
+    print("    GROQ_API_KEY=...    (Whisper — preferred for speech; console.groq.com/keys)")
+    print("    OPENAI_API_KEY=...  (Whisper fallback; platform.openai.com/api-keys)")
+    print("    NGC_API_KEY=...     (Nemotron — multimodal audio+visual; build.nvidia.com)")
     print("")
-    print("  Without a key, /watch still works but videos without captions come back frames-only.")
+    print("  Without any key, /watch still works but videos without captions come back frames-only.")
     return 3
 
 
