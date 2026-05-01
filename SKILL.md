@@ -1,11 +1,11 @@
 ---
 name: watch
-description: Watch a video (URL or local path). Downloads with yt-dlp, extracts auto-scaled frames with ffmpeg, pulls the transcript from captions (or Whisper API fallback), and hands the result to the agent so it can answer questions about what's in the video.
+description: Ingest video and audio files. Extracts text, frames, and scene cuts from any media source (URL or local path) using yt-dlp, ffmpeg, Whisper, and multimodal AI — the one-stop skill for AI agents to understand media.
 argument-hint: "<video-url-or-path> [question]"
 allowed-tools: Bash, Read, AskUserQuestion
-homepage: https://github.com/dewdad/claude-video
-repository: https://github.com/dewdad/claude-video
-author: bradautomates
+homepage: https://github.com/dewdad/media-ingest
+repository: https://github.com/dewdad/media-ingest
+author: dewdad
 license: MIT
 user-invocable: true
 ---

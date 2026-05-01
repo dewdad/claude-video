@@ -195,7 +195,7 @@ def _post_completions(config: dict, body: dict) -> dict:
         "Authorization": f"Bearer {config['api_key']}",
         "Content-Type": "application/json",
         "Accept": "application/json",
-        "User-Agent": "watch-skill/1.0 (+claude-video; python-urllib)",
+        "User-Agent": "media-ingest/1.0 (+github.com/dewdad/media-ingest; python-urllib)",
     }
 
     if "nvidia.com" in config["base_url"]:

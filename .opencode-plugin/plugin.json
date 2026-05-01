@@ -1,12 +1,12 @@
 {
-  "name": "watch",
-  "version": "0.1.2",
-  "description": "Let OpenCode watch a video. Downloads with yt-dlp, extracts auto-scaled frames with ffmpeg, pulls captions or falls back to Whisper, and hands frames + transcript to the agent so it can answer questions about the video.",
+  "name": "media-ingest",
+  "version": "0.2.0",
+  "description": "Ingest video and audio files. Extracts text, frames, and scene cuts from any media source (URL or local path) using yt-dlp, ffmpeg, Whisper, and multimodal AI — the one-stop skill for AI agents to understand media.",
   "author": {
-    "name": "Bradley Bonanno"
+    "name": "dewdad"
   },
-  "homepage": "https://github.com/dewdad/claude-video",
-  "repository": "https://github.com/dewdad/claude-video",
+  "homepage": "https://github.com/dewdad/media-ingest",
+  "repository": "https://github.com/dewdad/media-ingest",
   "license": "MIT",
-  "keywords": ["video", "watch", "youtube", "vimeo", "tiktok", "transcription", "whisper", "yt-dlp", "ffmpeg", "multimodal", "frames"]
+  "keywords": ["video", "audio", "media", "ingest", "transcription", "whisper", "multimodal", "yt-dlp", "ffmpeg", "frames", "youtube", "podcast"]
 }
