@@ -17,7 +17,7 @@ sys.path.insert(0, str(SCRIPT_DIR))
 
 from download import download, is_url  # noqa: E402
 from frames import MAX_FPS, auto_fps, auto_fps_focus, extract, format_time, get_metadata, parse_time  # noqa: E402
-from nemotron import analyze_media, load_ngc_key, MAX_VIDEO_DURATION_SEC  # noqa: E402
+from multimodal import analyze_media, has_multimodal_key, load_config, MAX_VIDEO_DURATION_SEC  # noqa: E402
 from transcribe import filter_range, format_transcript, parse_vtt  # noqa: E402
 from whisper import extract_audio, load_api_key, transcribe_video  # noqa: E402
 
@@ -46,21 +46,33 @@ def main() -> int:
         help="Force a specific Whisper backend. Default: prefer Groq, fall back to OpenAI.",
     )
     ap.add_argument(
-        "--nemotron",
+        "--multimodal",
         action="store_true",
-        help="Use Nemotron multimodal analysis (video ≤2min or audio). "
+        help="Use multimodal analysis (video ≤2min or audio). "
              "Provides unified audio+visual understanding including non-speech audio.",
     )
     ap.add_argument(
-        "--nemotron-audio",
+        "--multimodal-audio",
         action="store_true",
-        help="Force Nemotron audio-only mode (up to 1hr). Use for long videos or "
+        help="Force multimodal audio-only mode (up to 1hr). Use for long videos or "
              "when you want non-speech audio analysis (music, SFX, ambient sounds).",
     )
     ap.add_argument(
-        "--no-nemotron",
+        "--no-multimodal",
         action="store_true",
-        help="Disable Nemotron fallback even when NGC_API_KEY is available.",
+        help="Disable multimodal fallback even when MULTIMODAL_API_KEY is available.",
+    )
+    ap.add_argument(
+        "--multimodal-model",
+        type=str,
+        default=None,
+        help="Override multimodal model (default: from env or nvidia/nemotron-3-nano-omni-reasoning-30b-a3b).",
+    )
+    ap.add_argument(
+        "--multimodal-base-url",
+        type=str,
+        default=None,
+        help="Override multimodal API base URL (default: from env or https://integrate.api.nvidia.com/v1).",
     )
     args = ap.parse_args()
 
@@ -127,29 +139,31 @@ def main() -> int:
     transcript_source: str | None = None
     nemotron_analysis: str | None = None
 
-    # --- Nemotron: explicit --nemotron or --nemotron-audio overrides the pipeline ---
-    if args.nemotron or args.nemotron_audio:
-        ngc_key = load_ngc_key()
-        if ngc_key:
-            mode = "audio" if args.nemotron_audio else "auto"
+    # --- Multimodal: explicit --multimodal or --multimodal-audio overrides the pipeline ---
+    if args.multimodal or args.multimodal_audio:
+        mm_config = load_config(
+            model=args.multimodal_model,
+            base_url=args.multimodal_base_url,
+        )
+        if mm_config["api_key"]:
+            mode = "audio" if args.multimodal_audio else "auto"
             try:
-                media_path = video_path if mode != "audio" else None
                 if mode == "audio":
-                    audio_out = work / "nemotron-audio.mp3"
+                    audio_out = work / "multimodal-audio.mp3"
                     extract_audio(video_path, audio_out)
                     media_path = audio_out
                 else:
                     media_path = Path(video_path)
                 text, used_mode = analyze_media(
-                    media_path, full_duration, ngc_key, mode=mode,
+                    media_path, full_duration, mm_config, mode=mode,
                 )
                 nemotron_analysis = text
-                transcript_source = f"nemotron ({used_mode})"
+                transcript_source = f"multimodal ({used_mode})"
             except SystemExit as exc:
-                print(f"[watch] nemotron failed: {exc}", file=sys.stderr)
+                print(f"[watch] multimodal failed: {exc}", file=sys.stderr)
         else:
             print(
-                "[watch] --nemotron requested but NGC_API_KEY not found. "
+                "[watch] --multimodal requested but MULTIMODAL_API_KEY (or NGC_API_KEY) not found. "
                 "Set it in ~/.config/watch/.env or environment.",
                 file=sys.stderr,
             )
@@ -192,25 +206,28 @@ def main() -> int:
                     file=sys.stderr,
                 )
 
-        # --- Nemotron auto-fallback: if no transcript yet and NGC key available ---
-        if not transcript_segments and not args.no_nemotron and not nemotron_analysis:
-            ngc_key = load_ngc_key()
-            if ngc_key:
+        # --- Multimodal auto-fallback: if no transcript yet and key available ---
+        if not transcript_segments and not args.no_multimodal and not nemotron_analysis:
+            if has_multimodal_key():
+                mm_config = load_config(
+                    model=args.multimodal_model,
+                    base_url=args.multimodal_base_url,
+                )
                 mode = "audio" if full_duration > MAX_VIDEO_DURATION_SEC else "auto"
                 try:
                     if mode == "audio":
-                        audio_out = work / "nemotron-audio.mp3"
+                        audio_out = work / "multimodal-audio.mp3"
                         extract_audio(video_path, audio_out)
                         media_file = audio_out
                     else:
                         media_file = Path(video_path)
                     text, used_mode = analyze_media(
-                        media_file, full_duration, ngc_key, mode=mode,
+                        media_file, full_duration, mm_config, mode=mode,
                     )
                     nemotron_analysis = text
-                    transcript_source = f"nemotron ({used_mode})"
+                    transcript_source = f"multimodal ({used_mode})"
                 except SystemExit as exc:
-                    print(f"[watch] nemotron fallback failed: {exc}", file=sys.stderr)
+                    print(f"[watch] multimodal fallback failed: {exc}", file=sys.stderr)
 
     info = dl.get("info") or {}
 
@@ -289,8 +306,8 @@ def main() -> int:
         setup_py = SCRIPT_DIR / "setup.py"
         print(
             "_No transcript available — proceed with frames only. "
-            "Captions were missing and the Whisper/Nemotron fallbacks were unavailable "
-            "(no API key set, or `--no-whisper`/`--no-nemotron` was used). "
+            "Captions were missing and the Whisper/multimodal fallbacks were unavailable "
+            "(no API key set, or `--no-whisper`/`--no-multimodal` was used). "
             f"Run `python3 {setup_py}` to enable transcription, then re-run._"
         )
 

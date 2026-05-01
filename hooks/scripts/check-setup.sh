@@ -41,6 +41,7 @@ command -v yt-dlp >/dev/null 2>&1 && HAS_YTDLP="yes"
 
 HAS_GROQ="$(read_key GROQ_API_KEY)"
 HAS_OPENAI="$(read_key OPENAI_API_KEY)"
+HAS_MULTIMODAL="$(read_key MULTIMODAL_API_KEY)"
 HAS_NGC="$(read_key NGC_API_KEY)"
 SETUP_COMPLETE="$(read_key SETUP_COMPLETE)"
 
@@ -50,8 +51,8 @@ fi
 
 if [[ -z "$HAS_FFMPEG" || -z "$HAS_YTDLP" ]]; then
   echo "/watch: needs ffmpeg + yt-dlp. Run \`python3 \$SKILL_DIR/scripts/setup.py\` once to install and scaffold config."
-elif [[ -z "$HAS_GROQ" && -z "$HAS_OPENAI" && -z "$HAS_NGC" ]]; then
-  echo "/watch: ready for videos with native captions. Add GROQ_API_KEY, OPENAI_API_KEY, or NGC_API_KEY to ~/.config/watch/.env to unlock transcription fallbacks."
+elif [[ -z "$HAS_GROQ" && -z "$HAS_OPENAI" && -z "$HAS_MULTIMODAL" && -z "$HAS_NGC" ]]; then
+  echo "/watch: ready for videos with native captions. Add GROQ_API_KEY, OPENAI_API_KEY, or MULTIMODAL_API_KEY to ~/.config/watch/.env to unlock transcription fallbacks."
 else
   echo "/watch: ready."
 fi

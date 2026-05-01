@@ -47,7 +47,7 @@ python3 "$SKILL_DIR/scripts/setup.py"
 
 On macOS with Homebrew, it auto-installs `ffmpeg` and `yt-dlp`. On Linux/Windows, it prints the exact install commands for the user to run. It scaffolds `~/.config/watch/.env` with commented placeholders at `0600` perms, and writes `SETUP_COMPLETE=true` once deps + a key are in place so the next session knows this user has already been through the wizard.
 
-**If an API key is still missing after install:** use `AskUserQuestion` to ask the user whether they have a Groq API key (preferred — cheaper, faster), an OpenAI key, or an NVIDIA NGC key (for Nemotron multimodal). Then write it into `~/.config/watch/.env` — set the matching `GROQ_API_KEY=...`, `OPENAI_API_KEY=...`, or `NGC_API_KEY=...` line. If they don't want to set up any transcription backend, proceed with `--no-whisper --no-nemotron` and tell them videos without native captions will come back frames-only.
+**If an API key is still missing after install:** use `AskUserQuestion` to ask the user whether they have a Groq API key (preferred — cheaper, faster), an OpenAI key, or a multimodal provider key (default: NVIDIA NGC for Nemotron). Then write it into `~/.config/watch/.env` — set the matching `GROQ_API_KEY=...`, `OPENAI_API_KEY=...`, or `MULTIMODAL_API_KEY=...` line. If they don't want to set up any transcription backend, proceed with `--no-whisper --no-multimodal` and tell them videos without native captions will come back frames-only.
 
 **Structured mode (optional):** `python3 "$SKILL_DIR/scripts/setup.py" --json` emits `{status, first_run, missing_binaries, whisper_backend, has_api_key, has_ngc_key, nemotron_available, config_file, platform}` where `status` is one of `ready | needs_install | needs_key | needs_install_and_key`. Use this when you need to branch on specifics (e.g. "is this the user's very first run?" → `first_run: true`).
 
@@ -88,9 +88,11 @@ Optional flags:
 - `--out-dir DIR` — keep working files somewhere specific (default: an auto-generated tmp dir)
 - `--whisper groq|openai` — force a specific Whisper backend (default: prefer Groq if both keys exist)
 - `--no-whisper` — disable the Whisper fallback entirely (frames-only if no captions)
-- `--nemotron` — use Nemotron multimodal analysis (video ≤2 min, or auto-falls back to audio mode for longer). Provides unified audio+visual understanding including non-speech audio (music, SFX, ambient). Requires `NGC_API_KEY`.
-- `--nemotron-audio` — force Nemotron audio-only mode (up to 1 hr). Use for long videos when you want non-speech audio analysis or when Whisper is unavailable.
-- `--no-nemotron` — disable Nemotron fallback even when `NGC_API_KEY` is available.
+- `--multimodal` — use multimodal analysis (video ≤2 min, or auto-falls back to audio mode for longer). Provides unified audio+visual understanding including non-speech audio (music, SFX, ambient). Requires `MULTIMODAL_API_KEY`.
+- `--multimodal-audio` — force multimodal audio-only mode (up to 1 hr). Use for long videos when you want non-speech audio analysis or when Whisper is unavailable.
+- `--no-multimodal` — disable multimodal fallback even when `MULTIMODAL_API_KEY` is available.
+- `--multimodal-model MODEL` — override the model (default: env `MULTIMODAL_MODEL` or `nvidia/nemotron-3-nano-omni-reasoning-30b-a3b`).
+- `--multimodal-base-url URL` — override the API endpoint (default: env `MULTIMODAL_BASE_URL` or `https://integrate.api.nvidia.com/v1`). Use to swap providers (OpenRouter, local vLLM, etc.).
 
 ### Focusing on a section (higher frame rate)
 
@@ -139,23 +141,27 @@ The script gets a timestamped transcript via a priority chain:
 2. **Whisper API fallback.** If no captions came back (or the source is a local file), the script extracts audio (`ffmpeg -vn -ac 1 -ar 16000 -b:a 64k`, ~0.5 MB/min) and uploads it to whichever Whisper API has a key configured:
    - **Groq** — `whisper-large-v3`. Preferred default: cheaper, faster. Get a key at console.groq.com/keys.
    - **OpenAI** — `whisper-1`. Fallback. Get a key at platform.openai.com/api-keys.
-3. **Nemotron multimodal fallback.** If both captions and Whisper are unavailable (or explicitly via `--nemotron`), the script sends the media to NVIDIA Nemotron-3-Nano-Omni for unified audio-visual analysis:
+3. **Multimodal fallback.** If both captions and Whisper are unavailable (or explicitly via `--multimodal`), the script sends the media to a multimodal model for unified audio-visual analysis:
    - **Video mode** (≤2 min) — sends the full video for joint audio+visual understanding.
-   - **Audio mode** (≤1 hr) — extracts and sends audio only. Used automatically for videos >2 min or when `--nemotron-audio` is set.
+   - **Audio mode** (≤1 hr) — extracts and sends audio only. Used automatically for videos >2 min or when `--multimodal-audio` is set.
    - **Advantages over Whisper:** understands non-speech audio (music, sound effects, ambient), correlates audio with visuals, identifies speakers from visual context.
-   - **Limitation:** reasoning is disabled for media inputs — Nemotron describes/transcribes but cannot do deep analytical reasoning. The agent (you) does the reasoning.
-   - Get an NGC key at build.nvidia.com/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning.
+   - **Limitation:** reasoning is disabled for media inputs on NVIDIA NIM — the model describes/transcribes but cannot do deep analytical reasoning. The agent (you) does the reasoning.
+   - **Provider-agnostic:** works with any OpenAI-compatible multimodal endpoint. Default: NVIDIA NIM (Nemotron-3-Nano-Omni).
+   - Configure via `~/.config/watch/.env`:
+     - `MULTIMODAL_API_KEY` — required (or legacy `NGC_API_KEY`)
+     - `MULTIMODAL_BASE_URL` — default: `https://integrate.api.nvidia.com/v1`
+     - `MULTIMODAL_MODEL` — default: `nvidia/nemotron-3-nano-omni-reasoning-30b-a3b`
 
-All keys live in `~/.config/watch/.env`. The priority chain is: captions → Whisper → Nemotron. Override with `--nemotron` to use Nemotron directly, or `--no-nemotron` to skip it.
+All keys live in `~/.config/watch/.env`. The priority chain is: captions → Whisper → multimodal. Override with `--multimodal` to use multimodal directly, or `--no-multimodal` to skip it.
 
 ## Failure modes and handling
 
 - **Setup preflight failed** → run `python3 "$SKILL_DIR/scripts/setup.py"` (auto-installs ffmpeg/yt-dlp via brew on macOS, scaffolds the `.env`). For API key, ask the user via `AskUserQuestion` and write it to `~/.config/watch/.env`.
-- **No transcript available** → captions missing AND (no Whisper key OR Whisper API failed) AND (no NGC key OR Nemotron failed). Script prints a hint pointing to setup. Proceed frames-only and tell the user.
+- **No transcript available** → captions missing AND (no Whisper key OR Whisper API failed) AND (no multimodal key OR multimodal failed). Script prints a hint pointing to setup. Proceed frames-only and tell the user.
 - **Long video warning printed** → acknowledge it in your answer. Offer to re-run focused on a specific section via `--start`/`--end` rather than a sparse full-video scan.
 - **Download fails** → yt-dlp's error goes to stderr. If it's a login-required or region-locked video, tell the user plainly; do not keep retrying.
 - **Whisper request fails** → the error is printed to stderr (likely: invalid key, rate limit, or 25 MB upload limit on a very long video). The report will say "none available" for transcript. You can retry with `--whisper openai` if Groq failed (or vice versa).
-- **Nemotron request fails** → the error is printed to stderr (likely: invalid NGC key, video >2 min in video mode, rate limit). Try `--nemotron-audio` for longer content or fall back to Whisper with `--no-nemotron`.
+- **Multimodal request fails** → the error is printed to stderr (likely: invalid API key, video >2 min in video mode, rate limit). Try `--multimodal-audio` for longer content, `--multimodal-base-url` to switch providers, or fall back to Whisper with `--no-multimodal`.
 
 ## Token efficiency
 
@@ -173,7 +179,7 @@ If you already watched a video this session and the user asks a follow-up, do **
 - Runs `ffmpeg` / `ffprobe` locally to extract frames as JPEGs and, when Whisper or Nemotron audio mode is needed, a mono 16 kHz audio clip
 - Sends the extracted audio clip to Groq's Whisper API (`api.groq.com/openai/v1/audio/transcriptions`) when `GROQ_API_KEY` is set (preferred — cheaper, faster)
 - Sends the extracted audio clip to OpenAI's audio transcription API (`api.openai.com/v1/audio/transcriptions`) when `OPENAI_API_KEY` is set and Groq is not, or when `--whisper openai` is forced
-- Sends the video file (≤2 min) or extracted audio to NVIDIA NIM API (`integrate.api.nvidia.com/v1/chat/completions`) when `NGC_API_KEY` is set and Nemotron is triggered (as fallback or via `--nemotron`)
+- Sends the video file (≤2 min) or extracted audio to the configured multimodal endpoint (default: `integrate.api.nvidia.com/v1/chat/completions`) when `MULTIMODAL_API_KEY` is set and multimodal is triggered (as fallback or via `--multimodal`)
 - Writes the downloaded video, frames, audio, and an intermediate transcript to a working directory under the system temp dir (or `--out-dir` if specified) so the agent can `Read` them
 - Reads / creates `~/.config/watch/.env` (mode `0600`) to store API key(s) and a `SETUP_COMPLETE` marker. As a fallback, also reads `.env` in the current working directory
 
@@ -184,6 +190,6 @@ If you already watched a video this session and the user asks a follow-up, do **
 - Does not log, cache, or write API keys to stdout, stderr, or output files
 - Does not persist anything outside the working directory and `~/.config/watch/.env` — clean up the working directory when you're done (Step 5)
 
-**Bundled scripts:** `scripts/watch.py` (entry point), `scripts/download.py` (yt-dlp wrapper), `scripts/frames.py` (ffmpeg frame extraction), `scripts/transcribe.py` (caption selection + Whisper orchestration), `scripts/whisper.py` (Groq / OpenAI clients), `scripts/nemotron.py` (NVIDIA NIM multimodal client), `scripts/setup.py` (preflight + installer)
+**Bundled scripts:** `scripts/watch.py` (entry point), `scripts/download.py` (yt-dlp wrapper), `scripts/frames.py` (ffmpeg frame extraction), `scripts/transcribe.py` (caption selection + Whisper orchestration), `scripts/whisper.py` (Groq / OpenAI clients), `scripts/multimodal.py` (provider-agnostic multimodal client; default: NVIDIA NIM), `scripts/setup.py` (preflight + installer)
 
 Review scripts before first use to verify behavior.
