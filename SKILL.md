@@ -91,7 +91,7 @@ Optional flags:
 - `--multimodal` — use multimodal analysis (video ≤2 min, or auto-falls back to audio mode for longer). Provides unified audio+visual understanding including non-speech audio (music, SFX, ambient). Requires `MULTIMODAL_API_KEY`.
 - `--multimodal-audio` — force multimodal audio-only mode (up to 1 hr). Use for long videos when you want non-speech audio analysis or when Whisper is unavailable.
 - `--no-multimodal` — disable multimodal fallback even when `MULTIMODAL_API_KEY` is available.
-- `--multimodal-model MODEL` — override the model (default: env `MULTIMODAL_MODEL` or `nvidia/nemotron-3-nano-omni-reasoning-30b-a3b`).
+- `--multimodal-model MODEL` — override the model (default: env `MULTIMODAL_MODEL` or `nvidia/nemotron-3-nano-omni-30b-a3b-reasoning`).
 - `--multimodal-base-url URL` — override the API endpoint (default: env `MULTIMODAL_BASE_URL` or `https://integrate.api.nvidia.com/v1`). Use to swap providers (OpenRouter, local vLLM, etc.).
 
 ### Focusing on a section (higher frame rate)
@@ -150,7 +150,7 @@ The script gets a timestamped transcript via a priority chain:
    - Configure via `~/.config/watch/.env`:
      - `MULTIMODAL_API_KEY` — required (or legacy `NGC_API_KEY`)
      - `MULTIMODAL_BASE_URL` — default: `https://integrate.api.nvidia.com/v1`
-     - `MULTIMODAL_MODEL` — default: `nvidia/nemotron-3-nano-omni-reasoning-30b-a3b`
+     - `MULTIMODAL_MODEL` — default: `nvidia/nemotron-3-nano-omni-30b-a3b-reasoning`
 
 All keys live in `~/.config/watch/.env`. The priority chain is: captions → Whisper → multimodal. Override with `--multimodal` to use multimodal directly, or `--no-multimodal` to skip it.
 

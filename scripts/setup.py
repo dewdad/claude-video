@@ -60,7 +60,7 @@ OPENAI_API_KEY=
 #
 # Defaults:
 #   MULTIMODAL_BASE_URL = https://integrate.api.nvidia.com/v1
-#   MULTIMODAL_MODEL    = nvidia/nemotron-3-nano-omni-reasoning-30b-a3b
+#   MULTIMODAL_MODEL    = nvidia/nemotron-3-nano-omni-30b-a3b-reasoning
 #
 # Get an NGC key:  https://build.nvidia.com/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning
 #
@@ -244,7 +244,7 @@ def _status() -> dict:
         "whisper_backend": backend,
         "has_api_key": has_key,
         "has_multimodal_key": has_multimodal,
-        "multimodal_model": _read_env_key("MULTIMODAL_MODEL") or "nvidia/nemotron-3-nano-omni-reasoning-30b-a3b",
+        "multimodal_model": _read_env_key("MULTIMODAL_MODEL") or "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
         "multimodal_base_url": _read_env_key("MULTIMODAL_BASE_URL") or "https://integrate.api.nvidia.com/v1",
         "config_file": str(CONFIG_FILE),
         "platform": platform.system(),
@@ -331,7 +331,7 @@ def cmd_install() -> int:
         if backend:
             parts.append(f"whisper: {backend}")
         if has_multimodal:
-            model = _read_env_key("MULTIMODAL_MODEL") or "nvidia/nemotron-3-nano-omni-reasoning-30b-a3b"
+            model = _read_env_key("MULTIMODAL_MODEL") or "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"
             parts.append(f"multimodal: {model.split('/')[-1]}")
         print(f"[setup] ready. backends: {', '.join(parts)}")
         if installed_deps:
@@ -348,7 +348,7 @@ def cmd_install() -> int:
     print("")
     print("  Multimodal provider is configurable:")
     print("    MULTIMODAL_BASE_URL=...  (default: https://integrate.api.nvidia.com/v1)")
-    print("    MULTIMODAL_MODEL=...     (default: nvidia/nemotron-3-nano-omni-reasoning-30b-a3b)")
+    print("    MULTIMODAL_MODEL=...     (default: nvidia/nemotron-3-nano-omni-30b-a3b-reasoning)")
     print("")
     print("  Without any key, /watch still works but videos without captions come back frames-only.")
     return 3

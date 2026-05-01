@@ -8,7 +8,7 @@ environment variables with strong defaults pointing to NVIDIA NIM (Nemotron).
 Configuration (env or ~/.config/watch/.env):
   MULTIMODAL_API_KEY    — Required. API key for the provider.
   MULTIMODAL_BASE_URL   — Endpoint URL. Default: https://integrate.api.nvidia.com/v1
-  MULTIMODAL_MODEL      — Model identifier. Default: nvidia/nemotron-3-nano-omni-reasoning-30b-a3b
+  MULTIMODAL_MODEL      — Model identifier. Default: nvidia/nemotron-3-nano-omni-30b-a3b-reasoning
   MULTIMODAL_MAX_TOKENS — Max output tokens. Default: 4096
 
 Legacy compat: NGC_API_KEY is accepted as fallback for MULTIMODAL_API_KEY.
@@ -29,7 +29,7 @@ from urllib.request import Request, urlopen
 
 
 DEFAULT_BASE_URL = "https://integrate.api.nvidia.com/v1"
-DEFAULT_MODEL = "nvidia/nemotron-3-nano-omni-reasoning-30b-a3b"
+DEFAULT_MODEL = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"
 DEFAULT_MAX_TOKENS = 4096
 
 MAX_VIDEO_DURATION_SEC = 120

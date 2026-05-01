@@ -66,7 +66,7 @@ def main() -> int:
         "--multimodal-model",
         type=str,
         default=None,
-        help="Override multimodal model (default: from env or nvidia/nemotron-3-nano-omni-reasoning-30b-a3b).",
+        help="Override multimodal model (default: from env or nvidia/nemotron-3-nano-omni-30b-a3b-reasoning).",
     )
     ap.add_argument(
         "--multimodal-base-url",
