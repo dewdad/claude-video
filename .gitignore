@@ -9,6 +9,10 @@ htmlcov/
 .idea/
 .vscode/
 
+# secrets — keys live in ~/.config/watch/.env, never in-repo
+.env
+!.env.example
+
 # build artifact from scripts/build-skill.sh
 /dist/
 

@@ -112,7 +112,13 @@ On first `/watch` call, the skill auto-installs `ffmpeg` + `yt-dlp` (macOS via b
 
 ```
 .
-├── SKILL.md                 # skill contract
+├── SKILL.md                 # skill contract (hot path)
+├── .env.example             # minimum config — copy to ~/.config/watch/.env
+├── references/              # cold-path docs the agent loads on demand
+│   ├── frame-budgets.md     # full + focused-mode budget tables
+│   ├── failure-handling.md  # error matrix, exit codes, --json schema
+│   ├── backends.md          # transcription backends, full flag list
+│   └── security.md          # full disclosure + bundled-script inventory
 ├── scripts/
 │   ├── watch.py             # entry point — orchestrates download → frames → transcript
 │   ├── download.py          # yt-dlp wrapper
@@ -122,9 +128,10 @@ On first `/watch` call, the skill auto-installs `ffmpeg` + `yt-dlp` (macOS via b
 │   ├── multimodal.py        # Provider-agnostic multimodal client (default: NVIDIA NIM)
 │   ├── setup.py             # preflight + installer
 │   └── build-skill.sh       # build dist/watch.skill for claude.ai upload
-├── hooks/                   # SessionStart status hook
+├── hooks/                   # SessionStart status hook (Claude Code)
+├── commands/                # /watch slash-command shim (Claude Code)
 ├── .opencode-plugin/        # OpenCode plugin manifest
-├── .claude-plugin/          # Claude Code plugin manifest
+├── .claude-plugin/          # Claude Code plugin manifest + marketplace
 ├── .codex-plugin/           # Codex packaging
 └── .github/workflows/       # auto-builds watch.skill on tag push
 ```
