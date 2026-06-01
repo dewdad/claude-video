@@ -9,16 +9,24 @@ node_modules/  export-ignore
 .DS_Store      export-ignore
 
 # Dev, docs, test, and media — not needed at skill runtime
-tests/         export-ignore
-docs/          export-ignore
-fixtures/      export-ignore
-assets/        export-ignore
-examples/      export-ignore
+tests/                       export-ignore
+docs/                        export-ignore
+fixtures/                    export-ignore
+assets/                      export-ignore
+examples/                    export-ignore
+enhancement-validation/      export-ignore
+enhancement-validation/**    export-ignore
 
 # NOTE: commands/, hooks/, and .claude-plugin/ are NOT export-ignored because
 # Claude Code's /plugin install fetches this same git archive tarball — they
 # must be in the archive for the plugin to install correctly. The claude.ai
 # .skill bundle strips them afterward via `zip -d` in scripts/build-skill.sh.
+#
+# OpenCode (skillshare) and Codex consume the same archive but only read
+# SKILL.md (per https://opencode.ai/docs/skills/). The Claude-specific
+# directories are inert there — ~3 KB unread overhead, accepted in exchange
+# for a single distribution path. Per-tool packaging is not worth the
+# maintenance burden at this size.
 
 # CI workflows — repo-only, not needed at skill runtime
 .github/         export-ignore

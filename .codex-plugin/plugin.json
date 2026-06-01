@@ -1,3 +1,12 @@
 {
-  "name": "watch"
+  "name": "watch",
+  "version": "0.2.0",
+  "description": "Ingest video and audio files. Extracts text, frames, and scene cuts from any media source (URL or local path) using yt-dlp, ffmpeg, Whisper, and multimodal AI — the one-stop skill for AI agents to understand media.",
+  "author": {
+    "name": "dewdad"
+  },
+  "homepage": "https://github.com/dewdad/media-ingest",
+  "repository": "https://github.com/dewdad/media-ingest",
+  "license": "MIT",
+  "entry": "SKILL.md"
 }

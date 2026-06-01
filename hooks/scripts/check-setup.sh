@@ -4,34 +4,47 @@
 # is missing.
 set -euo pipefail
 
-CONFIG_FILE="$HOME/.config/watch/.env"
+# Mirror the Python scripts' resolution order: ~/.config/watch/.env (canonical)
+# then a project-local .env (cwd fallback). See whisper.py:65, multimodal.py:43.
+CANONICAL_CONFIG="$HOME/.config/watch/.env"
+LOCAL_CONFIG="$(pwd)/.env"
 
-# Warn if the secrets file has loose permissions.
-if [[ -f "$CONFIG_FILE" ]]; then
-  perms=$(stat -c '%a' "$CONFIG_FILE" 2>/dev/null || stat -f '%Lp' "$CONFIG_FILE" 2>/dev/null || echo "")
+CONFIG_FILES=()
+[[ -f "$CANONICAL_CONFIG" ]] && CONFIG_FILES+=("$CANONICAL_CONFIG")
+[[ -f "$LOCAL_CONFIG" && "$LOCAL_CONFIG" != "$CANONICAL_CONFIG" ]] && CONFIG_FILES+=("$LOCAL_CONFIG")
+
+# Warn if the canonical secrets file has loose permissions. (Try BSD stat first
+# since the documented default platform is macOS; fall back to GNU stat.)
+if [[ -f "$CANONICAL_CONFIG" ]]; then
+  perms=$(stat -f '%Lp' "$CANONICAL_CONFIG" 2>/dev/null || stat -c '%a' "$CANONICAL_CONFIG" 2>/dev/null || echo "")
   if [[ -n "$perms" && "$perms" != "600" && "$perms" != "400" ]]; then
-    echo "/watch: WARNING — $CONFIG_FILE has permissions $perms (should be 600)."
-    echo "  Fix: chmod 600 $CONFIG_FILE"
+    echo "/watch: WARNING — $CANONICAL_CONFIG has permissions $perms (should be 600)."
+    echo "  Fix: chmod 600 $CANONICAL_CONFIG"
   fi
 fi
 
-# Load API keys from the config file without exporting them.
+# Load API keys from env first, then any config file (canonical wins over cwd).
 read_key() {
   local name="$1"
   if [[ -n "${!name:-}" ]]; then
     echo "${!name}"
     return
   fi
-  if [[ -f "$CONFIG_FILE" ]]; then
-    awk -F= -v k="$name" '
+  for cfg in "${CONFIG_FILES[@]}"; do
+    local value
+    value=$(awk -F= -v k="$name" '
       /^[[:space:]]*#/ { next }
       $1 == k {
         sub(/^[[:space:]]*/, "", $2); sub(/[[:space:]]*$/, "", $2);
         gsub(/^["'\'']|["'\'']$/, "", $2);
         print $2; exit
       }
-    ' "$CONFIG_FILE"
-  fi
+    ' "$cfg")
+    if [[ -n "$value" ]]; then
+      echo "$value"
+      return
+    fi
+  done
 }
 
 HAS_FFMPEG=""
